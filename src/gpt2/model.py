@@ -105,6 +105,7 @@ class LayerNorm(nn.Module):
 
 class Transformer(nn.Module):
     MAX_CONTEXT_LENGTH = 4096  # tok
+    P_DROPOUT = 0.1
 
     def __init__(self, n_blocks: int, n_heads: int, d_model: int, d_ff: int):
         super().__init__()
@@ -113,6 +114,7 @@ class Transformer(nn.Module):
         self.d_model = d_model
         self.d_ff = d_ff
 
+        self.dropout = nn.Dropout(p=self.P_DROPOUT)
         self.encoder_blocks = nn.ModuleList(
             [
                 nn.ModuleDict(
@@ -149,26 +151,33 @@ class Transformer(nn.Module):
 
     def encoder(self, x: torch.Tensor) -> torch.Tensor:
         out = x
+        # TODO: Needs dropout applied to each sublayer output before adding to residual
         for encoder_block in self.encoder_blocks:
             x_1 = encoder_block["mha"](out, out, out)
-            x_2 = encoder_block["norm1"](out + x_1, dim=-1)
+            res_1 = out + self.dropout(x_1)
+            x_2 = encoder_block["norm1"](res_1, dim=-1)
             x_3 = F.relu(encoder_block["linear1"](x_2))
             x_4 = encoder_block["linear2"](x_3)
-            out = encoder_block["norm2"](x_4 + x_2, dim=-1)
+            res_2 = x_2 + self.dropout(x_4)
+            out = encoder_block["norm2"](res_2, dim=-1)
 
         return out
 
     def decoder(self, x: torch.Tensor, encoder_out: torch.Tensor) -> torch.Tensor:
         out = x
         for decoder_block in self.decoder_blocks:
+            # TODO: Needs dropout applied to each sublayer output before adding to residual
             d_1 = decoder_block["mha1"](out, out, out)
-            d_2 = decoder_block["norm1"](out + d_1, dim=-1)
+            res_1 = out + self.dropout(d1)
+            d_2 = decoder_block["norm1"](res_1, dim=-1)
             # note that q, k are from the outputs of the encoder
             d_3 = decoder_block["mha2"](d_2, encoder_out, encoder_out)
-            d_4 = decoder_block["norm2"](d_2 + d_3, dim=-1)
+            res_2 = d_2 + self.dropout(d_3)
+            d_4 = decoder_block["norm2"](res_2, dim=-1)
             d_5 = F.relu(decoder_block["linear1"](d_4))
             d_6 = decoder_block["linear2"](d_5)
-            out = decoder_block["norm3"](d_6 + d_4, dim=-1)
+            res_3 = d_4 + self.dropout(d_6)
+            out = decoder_block["norm3"](res_3, dim=-1)
 
         return out
 
@@ -204,6 +213,7 @@ class GPT2Model(nn.Module):
     D_MODEL = 512
     D_FF = 2048
     MAX_CONTEXT_LEN = 4096
+    P_DROPOUT = 0.1
 
     # N_BLOCKS = 1
     # N_HEADS = 4
@@ -224,14 +234,18 @@ class GPT2Model(nn.Module):
             "positional_encoding",
             self.transformer.positional_encoding(self.D_MODEL, self.MAX_CONTEXT_LEN),
         )
+        self.dropout = nn.Dropout(p=self.P_DROPOUT)
 
     def forward(self, x: torch.Tensor, prev_output: torch.Tensor) -> torch.Tensor:
         input_embeddings = torch.embedding(self.w_emb, x)
         input_embeddings += self.positional_encoding[input_embeddings.shape[0], :]
+        input_embeddings = self.dropout(input_embeddings)
+
         prev_output_embeddings = torch.embedding(self.w_emb, prev_output)
         prev_output_embeddings += self.positional_encoding[
             prev_output_embeddings.shape[0], :
         ]
+        prev_output_embeddings = self.dropout(prev_output_embeddings)
 
         transformer_out = self.transformer.forward(
             input_embeddings, prev_output_embeddings
