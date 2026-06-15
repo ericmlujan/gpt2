@@ -8,6 +8,7 @@ from tqdm import tqdm, trange
 
 from gpt2.model import GPT2Model, GPT2Tokenizer
 
+
 class TranslationDataset(Dataset):
     def __init__(self, split: str) -> None:
         self._ds = load_dataset("Helsinki-NLP/opus-100", "en-es")[split]
@@ -38,7 +39,10 @@ def wrap_eot(seq: torch.Tensor, eot_tok: int) -> torch.Tensor:
 
 MAX_SEQ_LEN = 254
 
-def collate(tokenizer: GPT2Tokenizer, batch: list[tuple[str, str]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None:
+
+def collate(
+    tokenizer: GPT2Tokenizer, batch: list[tuple[str, str]]
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None:
     encoder_inputs, decoder_inputs, targets = [], [], []
     eot = tokenizer.end_of_text_token()
     pad = tokenizer.pad_token()
@@ -77,7 +81,7 @@ def train():
     translation_dl = DataLoader(
         translation_dataset,
         batch_size=TRAIN_BS,
-        collate_fn=lambda batch: collate(model.tokenizer, batch)
+        collate_fn=lambda batch: collate(model.tokenizer, batch),
     )
 
     optim = torch.optim.AdamW(model.parameters())
