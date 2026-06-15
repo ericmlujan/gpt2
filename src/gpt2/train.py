@@ -8,14 +8,6 @@ from tqdm import tqdm, trange
 
 from gpt2.model import GPT2Model, GPT2Tokenizer
 
-app = modal.App("gpt2")
-image = (
-    modal.Image.from_registry("pytorch/pytorch:2.11.0-cuda13.0-cudnn9-devel")
-    .uv_pip_install("datasets", "tqdm", "tiktoken")
-    .add_local_python_source("gpt2")
-)
-
-
 class TranslationDataset(Dataset):
     def __init__(self, split: str) -> None:
         self._ds = load_dataset("Helsinki-NLP/opus-100", "en-es")[split]
@@ -46,39 +38,34 @@ def wrap_eot(seq: torch.Tensor, eot_tok: int) -> torch.Tensor:
 
 MAX_SEQ_LEN = 254
 
-
-def make_collate_fn(tokenizer: GPT2Tokenizer):
+def collate(tokenizer: GPT2Tokenizer, batch: list[tuple[str, str]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None:
+    encoder_inputs, decoder_inputs, targets = [], [], []
     eot = tokenizer.end_of_text_token()
     pad = tokenizer.pad_token()
 
-    def collate(batch: list[tuple[str, str]]):
-        encoder_inputs, decoder_inputs, targets = [], [], []
-        for en, es in batch:
-            en_tok = tokenizer.encode(en)
-            es_tok = tokenizer.encode(es)
-            if len(en_tok) > MAX_SEQ_LEN or len(es_tok) > MAX_SEQ_LEN:
-                continue
+    for en, es in batch:
+        en_tok = tokenizer.encode(en)
+        es_tok = tokenizer.encode(es)
+        if len(en_tok) > MAX_SEQ_LEN or len(es_tok) > MAX_SEQ_LEN:
+            continue
 
-            # English source: <EOT>Hello world<EOT>
-            encoder_inputs.append(wrap_eot(en_tok, eot))
-            # Spanish target shifted by one: decoder sees <EOT>+seq, predicts seq+<EOT>
-            dec = prepend_eot(es_tok, eot)
-            decoder_inputs.append(dec)
-            targets.append(shift_right(dec, eot))
+        # English source: <EOT>Hello world<EOT>
+        encoder_inputs.append(wrap_eot(en_tok, eot))
+        # Spanish target shifted by one: decoder sees <EOT>+seq, predicts seq+<EOT>
+        dec = prepend_eot(es_tok, eot)
+        decoder_inputs.append(dec)
+        targets.append(shift_right(dec, eot))
 
-        if not encoder_inputs:
-            return None
+    if not encoder_inputs:
+        return None
 
-        return (
-            pad_sequence(encoder_inputs, batch_first=True, padding_value=pad),
-            pad_sequence(decoder_inputs, batch_first=True, padding_value=pad),
-            pad_sequence(targets, batch_first=True, padding_value=pad),
-        )
-
-    return collate
+    return (
+        pad_sequence(encoder_inputs, batch_first=True, padding_value=pad),
+        pad_sequence(decoder_inputs, batch_first=True, padding_value=pad),
+        pad_sequence(targets, batch_first=True, padding_value=pad),
+    )
 
 
-@app.function(image=image, gpu="T4")
 def train():
     TRAIN_BS = 24
     TRAIN_EPOCHS = 100
@@ -90,7 +77,7 @@ def train():
     translation_dl = DataLoader(
         translation_dataset,
         batch_size=TRAIN_BS,
-        collate_fn=make_collate_fn(model.tokenizer),
+        collate_fn=lambda batch: collate(model.tokenizer, batch)
     )
 
     optim = torch.optim.AdamW(model.parameters())
