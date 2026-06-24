@@ -1,7 +1,7 @@
 import modal
 import click
 
-from gpt2.train import train
+from gpt2.train import TrainConfig, train
 
 # app = modal.App.lookup("gpt2", create_if_missing=True)
 app = modal.App("gpt2")
@@ -12,9 +12,13 @@ image = (
 )
 
 
-@app.function(image=image, gpu="T4")
-def train_modal():
-    train()
+modal_train_config = TrainConfig(bs=56, epochs=10)
+local_train_config = TrainConfig(bs=16, epochs=2)
+
+
+@app.function(image=image, gpu="A100", timeout=3600)
+def train_remote():
+    train(modal_train_config)
 
 
 @click.command()
@@ -23,10 +27,11 @@ def train_modal():
 )
 def main(**kwargs):
     if kwargs["local"]:
-        train()
+        train(local_train_config)
     else:
-        with app.run():
-            train_modal.remote()
+        with modal.enable_output():
+            with app.run():
+                train_remote.remote()
 
 
 if __name__ == "__main__":

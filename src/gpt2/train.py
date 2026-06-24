@@ -1,4 +1,6 @@
-import modal
+import math
+from dataclasses import dataclass
+
 import torch
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
@@ -7,6 +9,12 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm, trange
 
 from gpt2.model import GPT2Model, GPT2Tokenizer
+
+
+@dataclass
+class TrainConfig:
+    bs: int
+    epochs: int
 
 
 class TranslationDataset(Dataset):
@@ -23,28 +31,37 @@ class TranslationDataset(Dataset):
         return len(self._ds)
 
 
-def shift_right(seq: torch.Tensor, eot_tok: int) -> torch.Tensor:
-    # Lop off the first token, append the EOT token
-    return torch.concat([seq[1:], torch.tensor(eot_tok).unsqueeze(dim=0)])
+MAX_SEQ_LEN = 254 # 256 if you account for the <EOT> tokens wrapping the inner string
 
 
-def prepend_eot(seq: torch.Tensor, eot_tok: int) -> torch.Tensor:
-    return torch.concat([torch.tensor(eot_tok).unsqueeze(dim=0), seq])
+class AIAYNScheduler(torch.optim.lr_scheduler.LRScheduler):
+    """
+    Learning rate scheduler that implements the linear warmup -> inverse square root
+    strategy from _Attention is All You Need_.
+    """
 
+    def __init__(self, optim: torch.optim.Adam, d_model: int, warmup_steps: int = 4000):
+        self.optim = optim
+        self.d_model = d_model
+        self.warmup_steps = warmup_steps
+        super().__init__(optim)
 
-def wrap_eot(seq: torch.Tensor, eot_tok: int) -> torch.Tensor:
-    eot_tensor = torch.tensor(eot_tok).unsqueeze(dim=0)
-    return torch.concat([eot_tensor, seq, eot_tensor])
-
-
-MAX_SEQ_LEN = 254
+    def get_lr(self) -> list[float | torch.Tensor]:
+        num_steps = self.last_epoch + 1
+        lr = (
+            1.0
+            / math.pow(self.d_model, 0.5)
+            * min(
+                math.pow(num_steps, -0.5), num_steps * math.pow(self.warmup_steps, -1.5)
+            )
+        )
+        return [lr]
 
 
 def collate(
     tokenizer: GPT2Tokenizer, batch: list[tuple[str, str]]
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None:
     encoder_inputs, decoder_inputs, targets = [], [], []
-    eot = tokenizer.end_of_text_token()
     pad = tokenizer.pad_token()
 
     for en, es in batch:
@@ -54,11 +71,11 @@ def collate(
             continue
 
         # English source: <EOT>Hello world<EOT>
-        encoder_inputs.append(wrap_eot(en_tok, eot))
+        encoder_inputs.append(tokenizer.wrap_eot(en_tok))
         # Spanish target shifted by one: decoder sees <EOT>+seq, predicts seq+<EOT>
-        dec = prepend_eot(es_tok, eot)
+        dec = tokenizer.prepend_eot(es_tok)
         decoder_inputs.append(dec)
-        targets.append(shift_right(dec, eot))
+        targets.append(tokenizer.shift_right(dec))
 
     if not encoder_inputs:
         return None
@@ -70,23 +87,22 @@ def collate(
     )
 
 
-def train():
-    TRAIN_BS = 24
-    TRAIN_EPOCHS = 100
-
+def train(config: TrainConfig):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = GPT2Model().to(device)
+    model.train()
 
     translation_dataset = TranslationDataset(split="train")
     translation_dl = DataLoader(
         translation_dataset,
-        batch_size=TRAIN_BS,
+        batch_size=config.bs,
         collate_fn=lambda batch: collate(model.tokenizer, batch),
     )
 
-    optim = torch.optim.AdamW(model.parameters())
+    optim = torch.optim.Adam(model.parameters(), lr=3e-4, betas=(0.9, 0.98), eps=1e-9)
+    scheduler = AIAYNScheduler(optim, model.D_MODEL)
 
-    for _ in trange(TRAIN_EPOCHS):
+    for _ in trange(config.epochs):
         for i, batch in enumerate(tqdm(translation_dl)):
             if batch is None:  # whole batch was filtered out
                 continue
@@ -105,7 +121,22 @@ def train():
                 ignore_index=model.tokenizer.pad_token(),
             )
             loss.backward()
-            optim.step()
 
-            if i % 1000 == 0:
+            # Prevent gradients from getting too too crazy
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+            optim.step()
+            scheduler.step()
+
+            if i != 0 and i % 200 == 0:
                 print(f"train loss: {loss}")
+                model.eval()
+
+                eval_str = (
+                    "hello, how are you?"
+                )
+                with torch.device(device):
+                    model.translate(eval_str, stream=True)
+                    print("")
+
+                model.train()

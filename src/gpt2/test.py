@@ -62,3 +62,8 @@ class TestGPT2Model:
         assert output.shape == (prev_output.shape[0], model.tokenizer.vocab_size())
         # Make sure logits form a probability distribution along the vocabulary size
         assert torch.allclose(output.sum(dim=-1), torch.ones(prev_output.shape[0]))
+
+    def test_translate(self):
+        model = GPT2Model().eval()
+        sample_string = "Hello, what is your name?"
+        assert model.translate(sample_string) == "Hola, como se llama?"
