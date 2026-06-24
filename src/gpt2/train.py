@@ -1,12 +1,13 @@
 import math
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
 from datasets import load_dataset
 from torch.utils.data import DataLoader, Dataset
-from tqdm import tqdm, trange
 
 from gpt2.model import TransformerTranslationModel, GPT2Tokenizer
 
@@ -15,6 +16,7 @@ from gpt2.model import TransformerTranslationModel, GPT2Tokenizer
 class TrainConfig:
     bs: int
     epochs: int
+    checkpoint_dir: Optional[Path] = None
 
 
 class TranslationDataset(Dataset):
@@ -31,7 +33,7 @@ class TranslationDataset(Dataset):
         return len(self._ds)
 
 
-MAX_SEQ_LEN = 254 # 256 if you account for the <EOT> tokens wrapping the inner string
+MAX_SEQ_LEN = 254  # 256 if you account for the <EOT> tokens wrapping the inner string
 
 
 class AIAYNScheduler(torch.optim.lr_scheduler.LRScheduler):
@@ -87,10 +89,23 @@ def collate(
     )
 
 
-def train(config: TrainConfig):
+def train(config: TrainConfig, resume_from_checkpoint_path: bool = False):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = TransformerTranslationModel().to(device)
-    model.train()
+
+    # Hyperparameters taken from _Attention is All You Need_ paper
+    optim = torch.optim.Adam(model.parameters(), lr=3e-4, betas=(0.9, 0.98), eps=1e-9)
+    scheduler = AIAYNScheduler(optim, model.D_MODEL)
+
+    epoch = 0
+
+    if resume_from_checkpoint_path and config.checkpoint_dir:
+        checkpoint_path = config.checkpoint_dir / "latest.tar"
+        with open(checkpoint_path, "rb") as f:
+            ckpt = torch.load(f, weights_only=True)
+            model.load_state_dict(ckpt["model_state_dict"])
+            optim.load_state_dict(ckpt["optim_state_dict"])
+            epoch = ckpt["epoch"]
 
     translation_dataset = TranslationDataset(split="train")
     translation_dl = DataLoader(
@@ -99,11 +114,10 @@ def train(config: TrainConfig):
         collate_fn=lambda batch: collate(model.tokenizer, batch),
     )
 
-    optim = torch.optim.Adam(model.parameters(), lr=3e-4, betas=(0.9, 0.98), eps=1e-9)
-    scheduler = AIAYNScheduler(optim, model.D_MODEL)
+    model.train()
 
-    for _ in trange(config.epochs):
-        for i, batch in enumerate(tqdm(translation_dl)):
+    for _ in range(epoch, config.epochs):
+        for i, batch in enumerate(translation_dl):
             if batch is None:  # whole batch was filtered out
                 continue
 
@@ -128,15 +142,17 @@ def train(config: TrainConfig):
             optim.step()
             scheduler.step()
 
-            if i != 0 and i % 200 == 0:
-                print(f"train loss: {loss}")
-                model.eval()
+        # End of epoch, save checkpoint
+        if config.checkpoint_dir:
+            train_state_dict = {
+                "model_state_dict": model.state_dict(),
+                "optim_state_dict": optim.state_dict(),
+                "epoch": epoch,
+            }
+            output_path = config.checkpoint_dir / f"{epoch}.tar"
+            with open(output_path, "wb") as f:
+                torch.save(train_state_dict, f)
 
-                eval_str = (
-                    "hello, how are you?"
-                )
-                with torch.device(device):
-                    model.translate(eval_str, stream=True)
-                    print("")
-
-                model.train()
+            # Symlink latest.tar for resume
+            latest_path = config.checkpoint_dir / "latest.tar"
+            latest_path.symlink_to(output_path)
