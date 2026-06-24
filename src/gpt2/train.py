@@ -8,7 +8,7 @@ from datasets import load_dataset
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm, trange
 
-from gpt2.model import GPT2Model, GPT2Tokenizer
+from gpt2.model import TransformerTranslationModel, GPT2Tokenizer
 
 
 @dataclass
@@ -89,7 +89,7 @@ def collate(
 
 def train(config: TrainConfig):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = GPT2Model().to(device)
+    model = TransformerTranslationModel().to(device)
     model.train()
 
     translation_dataset = TranslationDataset(split="train")

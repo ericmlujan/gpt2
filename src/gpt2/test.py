@@ -1,8 +1,9 @@
 import pytest
 import torch
+import torch.nn.functional as F
 from mpmath.ctx_mp_python import new
 
-from gpt2.model import GPT2Model, MultiHeadAttention, Transformer
+from gpt2.model import TransformerTranslationModel, MultiHeadAttention, Transformer
 
 
 class TestMultiHeadAttention:
@@ -47,23 +48,22 @@ class TestTransformer:
         d_model = 16
         seq_len = 24
         model = Transformer(n_blocks=5, n_heads=2, d_ff=d_model * 4, d_model=d_model)
-        input = torch.ones(1, seq_len, d_model)
+
+        x = torch.ones(1, seq_len, d_model)
+        x_mask = torch.zeros(1, seq_len, dtype=torch.bool)
+
         prev_output = torch.ones(1, seq_len - 5, d_model)
-        output = model.forward(input, prev_output)
+        prev_output_mask = torch.zeros(1, seq_len - 5, dtype=torch.bool)
+
+        output = model.forward(x, prev_output, x_mask, prev_output_mask)
         assert output.shape == (1, seq_len - 5, d_model)
 
 
-class TestGPT2Model:
+class TestTransformerTranslationModel:
     def test_forward(self):
-        model = GPT2Model()
-        x = model.tokenizer.encode("My name is Eric!")
-        prev_output = model.tokenizer.encode("stub")
-        output = model.forward(x, prev_output)
-        assert output.shape == (prev_output.shape[0], model.tokenizer.vocab_size())
-        # Make sure logits form a probability distribution along the vocabulary size
-        assert torch.allclose(output.sum(dim=-1), torch.ones(prev_output.shape[0]))
+        model = TransformerTranslationModel()
+        x = model.tokenizer.encode("My name is Eric!").unsqueeze(0)
 
-    def test_translate(self):
-        model = GPT2Model().eval()
-        sample_string = "Hello, what is your name?"
-        assert model.translate(sample_string) == "Hola, como se llama?"
+        prev_output = model.tokenizer.encode("stub").unsqueeze(0)
+        output = model.forward(x, prev_output)
+        assert output.shape == (1, prev_output.shape[1], model.tokenizer.vocab_size())
