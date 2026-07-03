@@ -352,4 +352,6 @@ class TransformerTranslationModel(nn.Module):
             if stream:
                 print(self.tokenizer.decode(sampled.to("cpu")), end="", flush=True)
 
-        return self.tokenizer.decode(encoded_translation.squeeze(dim=0).to("cpu"))
+        # strip leading and final eot tokens
+        stripped = encoded_translation[:, 1 : -1]
+        return self.tokenizer.decode(stripped.squeeze(dim=0).to("cpu"))
