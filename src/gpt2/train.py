@@ -12,7 +12,8 @@ from datasets import load_dataset
 from torch.utils.data import DataLoader, Dataset
 import wandb
 
-from gpt2.model import TransformerTranslationModel, GPT2Tokenizer
+from gpt2.models.translation_model import TransformerTranslationModel
+from gpt2.model import GPT2Tokenizer
 
 logger = logging.getLogger("train")
 

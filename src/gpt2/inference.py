@@ -3,7 +3,7 @@ from pathlib import Path
 import torch
 import click
 
-from gpt2.model import TransformerTranslationModel
+from gpt2.models.translation_model import TransformerTranslationModel
 
 @click.option("--checkpoint", help="Path to the checkpoint to load", type=Path, required=True)
 @click.command()

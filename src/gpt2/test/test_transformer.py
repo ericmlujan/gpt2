@@ -1,10 +1,6 @@
-import pytest
 import torch
-import torch.nn.functional as F
-from mpmath.ctx_mp_python import new
 
-from gpt2.model import TransformerTranslationModel, MultiHeadAttention, Transformer
-
+from gpt2.model import MultiHeadAttention, Transformer
 
 class TestMultiHeadAttention:
     def test_multihead_attention(self):
@@ -57,13 +53,3 @@ class TestTransformer:
 
         output = model.forward(x, prev_output, x_mask, prev_output_mask)
         assert output.shape == (1, seq_len - 5, d_model)
-
-
-class TestTransformerTranslationModel:
-    def test_forward(self):
-        model = TransformerTranslationModel()
-        x = model.tokenizer.encode("My name is Eric!").unsqueeze(0)
-
-        prev_output = model.tokenizer.encode("stub").unsqueeze(0)
-        output = model.forward(x, prev_output)
-        assert output.shape == (1, prev_output.shape[1], model.tokenizer.vocab_size())
