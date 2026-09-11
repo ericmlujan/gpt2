@@ -11,7 +11,7 @@ class GPT2Model(nn.Module):
     # - Residual layers are scaled by 1/sqrt(num residual layers)
     #
     # GPT architecture is the decoder-only transformer with masked self-attention.
-    # Model hyperparams: 12 heads, dmodel=768, d_ff=3096, trained on a typical
+    # Model hyperparams: 12 heads, dmodel=768, d_ff=3072, trained on a typical
     # negative log-likelihood loss with Adam and lr incrase.
     #
     # Original GPT was trained for 100 epoch, minibatches were 64 sequences of 512 tokens
@@ -44,9 +44,9 @@ class GPT2Model(nn.Module):
             torch.empty(self.tokenizer.vocab_size(), self.d_model)
         )
         # positional encoding weights
-        self.w_pos = nn.Parameter(torch.empty(self.d_model, self.max_context_length))
+        self.w_pos = nn.Parameter(torch.empty(self.max_context_length, self.d_model))
 
-        self.decoder_blocks = nn.ParameterList(
+        self.decoder_blocks = nn.ModuleList(
             [
                 TransformerDecoder(
                     self.n_heads, self.d_model, self.d_ff, self.p_dropout
@@ -63,12 +63,13 @@ class GPT2Model(nn.Module):
         nn.init.normal_(self.w_pos, std=0.02)
 
     def forward(self, x: torch.Tensor):
-        # We don't pad in the decoder-only transformer, so we can set the decoder padding mask to all ones
+        # We don't pad in the decoder-only transformer, so we can set the decoder padding mask to all zeroes
         # TODO: We can make this optional in the base class too
-        pad_mask = torch.ones_like(x, dtype=torch.bool)
-        h_0 = torch.embedding(self.w_emb, x) + self.w_pos[:, x.shape[-1]]
+        pad_mask = torch.zeros_like(x, dtype=torch.bool)
+        h_0 = torch.embedding(self.w_emb, x) + self.w_pos[: x.shape[-1]]
         h_dec = h_0
         for block in self.decoder_blocks:
             h_dec = block(h_dec, pad_mask)
         logits = h_dec @ self.w_emb.T
-        return F.softmax(logits, dim=-1)[:, -1]
+        # Compute softmax along the vocabulary size
+        return F.softmax(logits, dim=-1)
