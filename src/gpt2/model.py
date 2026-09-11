@@ -144,6 +144,93 @@ class LayerNorm(nn.Module):
         return (self.gain / torch.sqrt(var + self.EPS)) * (x - mean) + self.bias
 
 
+class TransformerDecoder(nn.Module):
+    def __init__(self, n_heads: int, d_model: int, d_ff: int, p_dropout: float):
+        super().__init__()
+
+        self.n_heads = n_heads
+        self.d_model = d_model
+        self.d_ff = d_ff
+
+        self.dropout = nn.Dropout(p_dropout)
+
+        self.nn = nn.ModuleDict(
+            {
+                "mha1": MultiHeadAttention(
+                    self.n_heads, self.d_model, causal_mask=True
+                ),
+                "norm1": LayerNorm(self.d_model),
+                "mha2": MultiHeadAttention(self.n_heads, self.d_model),
+                "norm2": LayerNorm(self.d_model),
+                "linear1": nn.Linear(d_model, d_ff),
+                "linear2": nn.Linear(d_ff, d_model),
+                "norm3": LayerNorm(self.d_model),
+            }
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: torch.Tensor,
+        encoder_out: torch.Tensor | None,
+        encoder_mask: torch.Tensor | None,
+    ):
+        if (encoder_out is not None and encoder_mask is None) or (
+            encoder_mask is not None and encoder_out is None
+        ):
+            raise ValueError(
+                "if using cross-attention, must specify both the encoder's output and the encoder mask"
+            )
+
+        d_1 = self.nn["mha1"](x, x, x, mask)
+        res_1 = x + self.dropout(d_1)
+        d_2 = self.nn["norm1"](res_1, dim=-1)
+        # if using cross-attention, q and k are from the outputs of the encoder and the mask should agree with the mask used for the encoder
+        # else, use q and k from the previous layer and the decoder's causal mask
+        if encoder_out is not None:
+            d_3 = self.nn["mha2"](d_2, encoder_out, encoder_out, encoder_mask)
+        else:
+            d_3 = self.nn["mha_2"](d_2, d_2, d_2, mask)
+        res_2 = d_2 + self.dropout(d_3)
+        d_4 = self.nn["norm2"](res_2, dim=-1)
+        d_5 = F.relu(self.nn["linear1"](d_4))
+        d_6 = self.nn["linear2"](d_5)
+        res_3 = d_4 + self.dropout(d_6)
+        out = self.nn["norm3"](res_3, dim=-1)
+        return out
+
+
+class TransformerEncoder(nn.Module):
+    def __init__(self, n_heads: int, d_model: int, d_ff: int, p_dropout: float):
+        super().__init__()
+
+        self.n_heads = n_heads
+        self.d_model = d_model
+        self.d_ff = d_ff
+
+        self.dropout = nn.Dropout(p_dropout)
+
+        self.nn = nn.ModuleDict(
+            {
+                "mha": MultiHeadAttention(self.n_heads, self.d_model),
+                "norm1": LayerNorm(self.d_model),
+                "linear1": nn.Linear(d_model, d_ff),
+                "linear2": nn.Linear(d_ff, d_model),
+                "norm2": LayerNorm(self.d_model),
+            }
+        )
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        x_1 = self.nn["mha"](x, x, x, mask)
+        res_1 = x + self.dropout(x_1)
+        x_2 = self.nn["norm1"](res_1, dim=-1)
+        x_3 = F.relu(self.nn["linear1"](x_2))
+        x_4 = self.nn["linear2"](x_3)
+        res_2 = x_2 + self.dropout(x_4)
+        out = self.nn["norm2"](res_2, dim=-1)
+        return out
+
+
 class Transformer(nn.Module):
     MAX_CONTEXT_LENGTH = 4096  # tok
     P_DROPOUT = 0.1
@@ -155,17 +242,10 @@ class Transformer(nn.Module):
         self.d_model = d_model
         self.d_ff = d_ff
 
-        self.dropout = nn.Dropout(p=self.P_DROPOUT)
         self.encoder_blocks = nn.ModuleList(
             [
-                nn.ModuleDict(
-                    {
-                        "mha": MultiHeadAttention(self.n_heads, self.d_model),
-                        "norm1": LayerNorm(self.d_model),
-                        "linear1": nn.Linear(d_model, d_ff),
-                        "linear2": nn.Linear(d_ff, d_model),
-                        "norm2": LayerNorm(self.d_model),
-                    }
+                TransformerEncoder(
+                    self.n_heads, self.d_model, self.d_ff, self.P_DROPOUT
                 )
                 for _ in range(n_blocks)
             ]
@@ -173,18 +253,8 @@ class Transformer(nn.Module):
 
         self.decoder_blocks = nn.ModuleList(
             [
-                nn.ModuleDict(
-                    {
-                        "mha1": MultiHeadAttention(
-                            self.n_heads, self.d_model, causal_mask=True
-                        ),
-                        "norm1": LayerNorm(self.d_model),
-                        "mha2": MultiHeadAttention(self.n_heads, self.d_model),
-                        "norm2": LayerNorm(self.d_model),
-                        "linear1": nn.Linear(d_model, d_ff),
-                        "linear2": nn.Linear(d_ff, d_model),
-                        "norm3": LayerNorm(self.d_model),
-                    }
+                TransformerDecoder(
+                    self.n_heads, self.d_model, self.d_ff, self.P_DROPOUT
                 )
                 for _ in range(n_blocks)
             ]
@@ -193,14 +263,7 @@ class Transformer(nn.Module):
     def encoder(self, x: torch.Tensor, encoder_mask: torch.Tensor) -> torch.Tensor:
         out = x
         for encoder_block in self.encoder_blocks:
-            x_1 = encoder_block["mha"](out, out, out, encoder_mask)
-            res_1 = out + self.dropout(x_1)
-            x_2 = encoder_block["norm1"](res_1, dim=-1)
-            x_3 = F.relu(encoder_block["linear1"](x_2))
-            x_4 = encoder_block["linear2"](x_3)
-            res_2 = x_2 + self.dropout(x_4)
-            out = encoder_block["norm2"](res_2, dim=-1)
-
+            out = encoder_block(out, encoder_mask)
         return out
 
     def decoder(
@@ -212,18 +275,7 @@ class Transformer(nn.Module):
     ) -> torch.Tensor:
         out = x
         for decoder_block in self.decoder_blocks:
-            d_1 = decoder_block["mha1"](out, out, out, decoder_mask)
-            res_1 = out + self.dropout(d_1)
-            d_2 = decoder_block["norm1"](res_1, dim=-1)
-            # note that q, k are from the outputs of the encoder
-            d_3 = decoder_block["mha2"](d_2, encoder_out, encoder_out, encoder_mask)
-            res_2 = d_2 + self.dropout(d_3)
-            d_4 = decoder_block["norm2"](res_2, dim=-1)
-            d_5 = F.relu(decoder_block["linear1"](d_4))
-            d_6 = decoder_block["linear2"](d_5)
-            res_3 = d_4 + self.dropout(d_6)
-            out = decoder_block["norm3"](res_3, dim=-1)
-
+            out = decoder_block(out, decoder_mask, encoder_out, encoder_mask)
         return out
 
     def forward(
@@ -234,7 +286,9 @@ class Transformer(nn.Module):
         decoder_mask: torch.Tensor,
     ) -> torch.Tensor:
         encoder_out = self.encoder(x, encoder_mask)
+        print(f"Encoder out: {encoder_out}")
         decoder_out = self.decoder(outputs, encoder_out, encoder_mask, decoder_mask)
+        print(f"Decoder out: {decoder_out}")
 
         return decoder_out
 
@@ -255,4 +309,3 @@ class Transformer(nn.Module):
         return torch.flatten(
             torch.stack([sines, cosines], dim=1).transpose(1, 2), start_dim=1
         )[:, :d_model]
-
