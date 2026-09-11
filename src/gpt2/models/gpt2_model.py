@@ -70,6 +70,4 @@ class GPT2Model(nn.Module):
         h_dec = h_0
         for block in self.decoder_blocks:
             h_dec = block(h_dec, pad_mask)
-        logits = h_dec @ self.w_emb.T
-        # Compute softmax along the vocabulary size
-        return F.softmax(logits, dim=-1)
+        return h_dec @ self.w_emb.T
