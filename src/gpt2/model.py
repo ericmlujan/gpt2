@@ -186,13 +186,13 @@ class TransformerDecoder(nn.Module):
         res_1 = x + self.dropout(d_1)
         d_2 = self.nn["norm1"](res_1, dim=-1)
         # if using cross-attention, q and k are from the outputs of the encoder and the mask should agree with the mask used for the encoder
-        # else, use q and k from the previous layer and the decoder's causal mask
+        # else, skip that block and go straight to the feedforward network
         if encoder_out is not None:
             d_3 = self.nn["mha2"](d_2, encoder_out, encoder_out, encoder_mask)
+            res_2 = d_2 + self.dropout(d_3)
+            d_4 = self.nn["norm2"](res_2, dim=-1)
         else:
-            d_3 = self.nn["mha_2"](d_2, d_2, d_2, mask)
-        res_2 = d_2 + self.dropout(d_3)
-        d_4 = self.nn["norm2"](res_2, dim=-1)
+            d_4 = d_2
         d_5 = F.relu(self.nn["linear1"](d_4))
         d_6 = self.nn["linear2"](d_5)
         res_3 = d_4 + self.dropout(d_6)
