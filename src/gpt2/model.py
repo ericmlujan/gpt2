@@ -172,8 +172,8 @@ class TransformerDecoder(nn.Module):
         self,
         x: torch.Tensor,
         mask: torch.Tensor,
-        encoder_out: torch.Tensor | None,
-        encoder_mask: torch.Tensor | None,
+        encoder_out: torch.Tensor | None = None,
+        encoder_mask: torch.Tensor | None = None,
     ):
         if (encoder_out is not None and encoder_mask is None) or (
             encoder_mask is not None and encoder_out is None
