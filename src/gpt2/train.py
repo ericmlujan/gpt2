@@ -70,7 +70,7 @@ class AIAYNScheduler(torch.optim.lr_scheduler.LRScheduler):
 
 
 def valid_loss(
-        model: TransformerTranslationModel, valid_dl: DataLoader, device
+    model: TransformerTranslationModel, valid_dl: DataLoader, device
 ) -> float:
     model.eval()
     total_loss = 0
@@ -192,7 +192,7 @@ def train(config: TrainConfig, volume: Optional[modal.Volume] = None):
                 logits.view(-1, model.tokenizer.vocab_size()),
                 targets.view(-1),
                 ignore_index=model.tokenizer.pad_token(),
-                label_smoothing=0.1
+                label_smoothing=0.1,
             )
             loss.backward()
 
@@ -207,7 +207,6 @@ def train(config: TrainConfig, volume: Optional[modal.Volume] = None):
                 vl = valid_loss(model, valid_dl, device)
                 logger.info(f"valid loss: {vl}")
                 wandb.log({"val/loss": vl})
-
 
         # End of epoch, log valid loss and save checkpoint
         epoch_loss = valid_loss(model, valid_dl, device)

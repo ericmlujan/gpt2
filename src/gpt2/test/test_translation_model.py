@@ -1,5 +1,6 @@
 from gpt2.models.translation_model import TransformerTranslationModel
 
+
 class TestTransformerTranslationModel:
     def test_forward(self):
         model = TransformerTranslationModel()

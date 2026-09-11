@@ -5,15 +5,20 @@ import click
 
 from gpt2.models.translation_model import TransformerTranslationModel
 
-@click.option("--checkpoint", help="Path to the checkpoint to load", type=Path, required=True)
+
+@click.option(
+    "--checkpoint", help="Path to the checkpoint to load", type=Path, required=True
+)
 @click.command()
 def main(**kwargs):
     ckpt_path = kwargs["checkpoint"]
     if not ckpt_path.exists():
         raise RuntimeError("checkpoint path don't exist")
 
-    with open(ckpt_path, 'rb') as f:
-        map_location = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    with open(ckpt_path, "rb") as f:
+        map_location = (
+            torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        )
         ckpt = torch.load(f, weights_only=False, map_location=map_location)
 
     print(f"Loaded checkpoint from epoch {ckpt["epoch"]}")
@@ -24,7 +29,7 @@ def main(**kwargs):
     model.eval()
 
     print("Bienvendios al traductor Lujan, buena suerte...")
-    while(True):
+    while True:
         translation_request = input("> ").strip()
         translation = model.translate(translation_request)
         print(translation)

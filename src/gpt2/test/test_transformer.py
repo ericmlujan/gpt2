@@ -2,6 +2,7 @@ import torch
 
 from gpt2.model import MultiHeadAttention, Transformer
 
+
 class TestMultiHeadAttention:
     def test_multihead_attention(self):
         n_heads = 8

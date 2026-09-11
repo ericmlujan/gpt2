@@ -7,6 +7,7 @@ import torch.nn.functional as F
 
 from gpt2.model import GPT2Tokenizer, Transformer
 
+
 class TransformerTranslationModel(nn.Module):
     # This isn't yet a GPT-2, we just want to try doing the actual vanilla transformer
     N_BLOCKS = 6
@@ -103,5 +104,5 @@ class TransformerTranslationModel(nn.Module):
                 print(self.tokenizer.decode(sampled.to("cpu")), end="", flush=True)
 
         # strip leading and final eot tokens
-        stripped = encoded_translation[:, 1 : -1]
+        stripped = encoded_translation[:, 1:-1]
         return self.tokenizer.decode(stripped.squeeze(dim=0).to("cpu"))
