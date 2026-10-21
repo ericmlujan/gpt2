@@ -71,7 +71,13 @@ class MultiHeadAttention(nn.Module):
 
         return F.softmax(y, dim=-1) @ v
 
-    def __init__(self, n_heads: int, d_model: int, causal_mask: bool = False):
+    def __init__(
+        self,
+        n_heads: int,
+        d_model: int,
+        init_weight_scale: float = 1.0,
+        causal_mask: bool = False,
+    ):
         super().__init__()
         if d_model % n_heads != 0:
             raise ValueError(
@@ -95,15 +101,18 @@ class MultiHeadAttention(nn.Module):
 
         self.w_o = nn.Parameter(torch.empty(d_model, d_model))
 
-        self.reset_parameters()
+        self.reset_parameters(init_weight_scale)
 
-    def reset_parameters(self) -> None:
-        nn.init.xavier_uniform_(self.w_o)
+    def reset_parameters(self, init_weight_scale: float) -> None:
+        with torch.no_grad():
+            nn.init.xavier_uniform_(self.w_o)
+            self.w_o *= init_weight_scale
 
-        for i in range(self.n_heads):
-            nn.init.xavier_uniform_(self.w_q[i])
-            nn.init.xavier_uniform_(self.w_k[i])
-            nn.init.xavier_uniform_(self.w_v[i])
+            for i in range(self.n_heads):
+                nn.init.xavier_uniform_(self.w_q[i])
+                nn.init.xavier_uniform_(self.w_k[i])
+                nn.init.xavier_uniform_(self.w_v[i])
+                # REVIEW: Do these also need to be scaled?
 
     def forward(
         self,
@@ -145,7 +154,14 @@ class LayerNorm(nn.Module):
 
 
 class TransformerDecoder(nn.Module):
-    def __init__(self, n_heads: int, d_model: int, d_ff: int, p_dropout: float):
+    def __init__(
+        self,
+        n_heads: int,
+        d_model: int,
+        d_ff: int,
+        p_dropout: float,
+        init_weight_scale: float = 1.0,
+    ):
         super().__init__()
 
         self.n_heads = n_heads
@@ -157,46 +173,34 @@ class TransformerDecoder(nn.Module):
         self.nn = nn.ModuleDict(
             {
                 "mha1": MultiHeadAttention(
-                    self.n_heads, self.d_model, causal_mask=True
+                    self.n_heads,
+                    self.d_model,
+                    init_weight_scale=init_weight_scale,
+                    causal_mask=True,
                 ),
                 "norm1": LayerNorm(self.d_model),
-                "mha2": MultiHeadAttention(self.n_heads, self.d_model),
                 "norm2": LayerNorm(self.d_model),
                 "linear1": nn.Linear(d_model, d_ff),
                 "linear2": nn.Linear(d_ff, d_model),
-                "norm3": LayerNorm(self.d_model),
             }
         )
+
+        with torch.no_grad():
+            self.nn["linear2"].weight *= init_weight_scale
+            if self.nn["linear2"].bias is not None:
+                self.nn["linear2"].bias *= init_weight_scale
 
     def forward(
         self,
         x: torch.Tensor,
-        mask: torch.Tensor,
-        encoder_out: torch.Tensor | None = None,
-        encoder_mask: torch.Tensor | None = None,
     ):
-        if (encoder_out is not None and encoder_mask is None) or (
-            encoder_mask is not None and encoder_out is None
-        ):
-            raise ValueError(
-                "if using cross-attention, must specify both the encoder's output and the encoder mask"
-            )
-
-        d_1 = self.nn["mha1"](x, x, x, mask)
-        res_1 = x + self.dropout(d_1)
-        d_2 = self.nn["norm1"](res_1, dim=-1)
-        # if using cross-attention, q and k are from the outputs of the encoder and the mask should agree with the mask used for the encoder
-        # else, skip that block and go straight to the feedforward network
-        if encoder_out is not None:
-            d_3 = self.nn["mha2"](d_2, encoder_out, encoder_out, encoder_mask)
-            res_2 = d_2 + self.dropout(d_3)
-            d_4 = self.nn["norm2"](res_2, dim=-1)
-        else:
-            d_4 = d_2
-        d_5 = F.relu(self.nn["linear1"](d_4))
-        d_6 = self.nn["linear2"](d_5)
-        res_3 = d_4 + self.dropout(d_6)
-        out = self.nn["norm3"](res_3, dim=-1)
+        x_norm = self.nn["norm1"](x, dim=-1)
+        d_1 = self.nn["mha1"](x_norm, x_norm, x_norm)
+        d_2 = x + self.dropout(d_1)
+        d_3 = self.nn["norm2"](d_2, dim=-1)
+        d_4 = F.relu(self.nn["linear1"](d_3))
+        d_5 = self.nn["linear2"](d_4)
+        out = d_2 + self.dropout(d_5)
         return out
 
 
